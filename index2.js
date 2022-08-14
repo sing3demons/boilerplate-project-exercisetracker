@@ -15,6 +15,8 @@ app.get('/', (req, res) => {
 let Users = []
 let Exercise = []
 let Logs = []
+let Log = []
+let count = 0
 
 app.post('/api/users/:_id/exercises', (req, res) => {
   const { _id } = req.params
@@ -31,26 +33,26 @@ app.post('/api/users/:_id/exercises', (req, res) => {
   }
   Exercise.push(resp)
 
+  Log.push({
+    description,
+    duration: +duration,
+    date: newDate.toDateString(),
+  })
+  count++
+
   res.json(resp)
 })
 
 app.get('/api/users/:_id/logs', (req, res) => {
   const { _id } = req.params
-  let count = 0
 
-  const ex = Exercise.find((e) => e._id === _id)
+  const ex = Users.find((e) => e._id === _id)
 
   const resp = {
     username: ex.username,
-    count: count + 1,
+    count: count,
     _id: ex._id,
-    log: [
-      {
-        description: ex.description,
-        duration: ex.duration,
-        date: ex.date,
-      },
-    ],
+    log: Log,
   }
 
   Logs.push(resp)
