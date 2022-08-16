@@ -10,24 +10,27 @@ mongoose.connect(process.env.MONGO_URI, {
   useUnifiedTopology: true,
 })
 
-let exSchema = new mongoose.Schema({
-  description: { type: String, required: true },
-  duration: { type: Number, required: true },
+const exerciseSchema = new mongoose.Schema({
+  username: String,
+  description: String,
+  duration: Number,
   date: String,
+  userId: String,
 })
 
-let userSchema = new mongoose.Schema({
-  username: { type: String, required: true },
-  log: [exSchema],
-  count: { type: Number },
+const userSchema = new mongoose.Schema({
+  username: String,
 })
 
+let Exercise = mongoose.model('Exercise', exerciseSchema)
 let User = mongoose.model('User', userSchema)
-let Exercise = mongoose.model('Exercise', exSchema)
+
+let count = 0
 
 app.use(cors())
 app.use(express.static('public'))
 app.use(bodyParser.urlencoded({ extended: false }))
+
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/views/index.html')
 })
@@ -36,93 +39,151 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
   const { _id } = req.params
   const { description, duration, date } = req.body
 
-  let exercise = new Exercise({
-    description,
-    duration,
-    date: getDate(date),
-  })
+  let currDate = ''
 
-  await exercise.save()
+  if (!date) {
+    currDate = new Date(Date.now())
 
-  const data = await User.findByIdAndUpdate(
-    _id,
-    { $push: { log: exercise } },
-    { new: true }
-  )
+    let myUser = await User.find({ _id })
 
-  let result = {}
-  result['_id'] = data._id
-  result['username'] = data.username
-  result['date'] = exercise.date
-  result['duration'] = exercise.duration
-  result['description'] = exercise.description
+    let newExercise = new Exercise({
+      username: myUser[0]._doc.username,
+      description: description,
+      duration: duration,
+      date: currDate.toISOString(),
+      userId: myUser[0]._doc._id,
+    })
 
-  res.json(result)
+    await Exercise.create(newExercise)
+
+    res.json({
+      username: myUser[0]._doc.username,
+      description: description,
+      duration: parseInt(duration),
+      date: currDate.toDateString(),
+      _id: myUser[0]._doc._id,
+    })
+  } else {
+    currDate = date
+
+    if (currDate.match(/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
+      let tempDate = currDate.split('-')
+      tempDate = new Date(tempDate[0], tempDate[1] - 1, tempDate[2])
+
+      let myUser = await User.find({ _id: _id })
+
+      let newExercise = new Exercise({
+        username: myUser[0]._doc.username,
+        description: description,
+        duration: duration,
+        date: tempDate.toISOString(),
+        userId: myUser[0]._doc._id,
+      })
+
+      await Exercise.create(newExercise)
+
+      res.json({
+        username: myUser[0]._doc.username,
+        description: description,
+        duration: parseInt(duration),
+        date: tempDate.toDateString(),
+        _id: myUser[0]._doc._id,
+      })
+    } else {
+      res.json({ error: 'Invalid Date Format' })
+    }
+  }
 })
 
 app.get('/api/users/:_id/logs', async (req, res) => {
   const { _id } = req.params
-  User.findById(_id).then((result) => {
-    let resObj = result
+  const { from, to, limit } = req.query
+  let myUser = await User.find({ _id })
 
-    if (req.query.from || req.query.to) {
-      let fromDate = new Date(0)
-      let toDate = new Date()
+  let dateObj = {}
+  let fromDate, toDate
+  if (from) {
+    dateObj['$gte'] = new Date(from).toISOString()
+    fromDate = new Date(dateObj['$gte']).toDateString()
+  }
+  if (to) {
+    dateObj['$lte'] = new Date(to).toISOString()
+    toDate = new Date(dateObj['$lte']).toDateString()
+  }
 
-      if (req.query.from) {
-        fromDate = new Date(req.query.from)
-      }
+  let filter = {
+    userId: myUser[0]._doc._id,
+  }
+  if (from || to) {
+    filter.date = dateObj
+  }
 
-      if (req.query.to) {
-        toDate = new Date(req.query.to)
-      }
+  let myExercise = {}
+  if (limit) {
+    myExercise = await Exercise.find(filter).limit(parseInt(limit))
+  } else {
+    myExercise = await Exercise.find(filter)
+  }
 
-      fromDate = fromDate.getTime()
-      toDate = toDate.getTime()
+  let myLog = []
+  myExercise.map((d) =>
+    myLog.push({
+      description: d.description,
+      duration: d.duration,
+      date: new Date(
+        d.date.split('T')[0].split('-')[0],
+        d.date.split('T')[0].split('-')[1] - 1,
+        d.date.split('T')[0].split('-')[2]
+      ).toDateString(),
+    })
+  )
 
-      resObj.log = resObj.log.filter((session) => {
-        let sessionDate = new Date(session.date).getTime()
-        return sessionDate >= fromDate && sessionDate <= toDate
-      })
-    }
-    if (req.query.limit) {
-      resObj.log = resObj.log.slice(0, req.query.limit)
-    }
-    resObj['count'] = result.log.length
-    res.json(resObj)
+  res.json({
+    username: myUser[0]._doc.username,
+    count: myExercise.length,
+    _id: myUser[0]._doc._id,
+    to: toDate,
+    from: fromDate,
+    log: myLog,
   })
 })
 
 app.get('/api/users', async (req, res) => {
-  const users = await User.find()
-
-  res.json(users)
+  try {
+    const data = await User.find()
+    res.json(data)
+  } catch (error) {
+    console.log(err)
+  }
 })
 
 app.post('/api/users', async (req, res) => {
-  const { username } = req.body
-  let user = await User.findOne({ username })
-  if (!user) {
-    user = new User({ username })
-    await user.save()
-    res.json(user)
-  } else {
-    res.json({ error: 'This user already exists.' })
+  try {
+    const { username } = req.body
+    count++
+
+    let newUser = new User({
+      username,
+    })
+
+    let myUser = await User.findOne({ username })
+
+    if (!myUser) {
+      await User.create(newUser)
+
+      myUser = await User.findOne({ username })
+
+      res.json({
+        username,
+        _id: myUser._id,
+      })
+    } else {
+      res.json({ error: `User already exists with an Id of ${myUser._id}` })
+    }
+  } catch (err) {
+    console.log(err)
   }
 })
-
-const getDate = (date) => {
-  if (!date) {
-    return new Date().toDateString()
-  }
-  const correctDate = new Date()
-  const dateString = date.split('-')
-  correctDate.setFullYear(dateString[0])
-  correctDate.setDate(dateString[2])
-  correctDate.setMonth(dateString[1] - 1)
-
-  return correctDate.toDateString()
-}
 
 const listener = app.listen(process.env.PORT || 3000, () => {
   console.log('Your app is listening on port ' + listener.address().port)
